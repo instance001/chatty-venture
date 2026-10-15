@@ -1,0 +1,4 @@
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path_android: store-listing/google-play/chatty-venture-play-icon-512.png

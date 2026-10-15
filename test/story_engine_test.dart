@@ -19,6 +19,34 @@ class _InvalidProposalNarrator implements AiDungeonMaster {
   }) async => 'This is narration, not a valid run bible.';
 }
 
+class _FencedProposalNarrator implements AiDungeonMaster {
+  @override
+  String get label => 'fenced-json';
+
+  @override
+  void cancel() {}
+
+  @override
+  Future<String> narrate(
+    NarratorContext context, {
+    void Function(String token)? onToken,
+  }) async => '''```json
+{
+  "title": "The Quiet Bell",
+  "premise": "A silent bell leaves the harbour unguarded.",
+  "problem": "The bell rope has vanished.",
+  "key_anchor": "a blue knot",
+  "supporting_character": "Iris the keeper",
+  "stakes": "The tide will catch the town unaware.",
+  "escalation": "The storm is moving in.",
+  "ending_image": "The bell rings through the dawn.",
+  "locations": ["Quay", "Archive", "Bell tower"],
+  "objectives": ["Find the missing rope", "Trace it to the archive", "Restore the bell"],
+  "flavour": "Rain and salt air."
+}
+```''';
+}
+
 void main() {
   final engine = StoryEngine();
 
@@ -362,6 +390,16 @@ void main() {
       );
     },
   );
+
+  test('a fenced Free Mode proposal is parsed as JSON', () async {
+    final bible = await FreeModeProposalService().generate(
+      _FencedProposalNarrator(),
+      FreeModeCatalog.templates.first,
+    );
+
+    expect(bible.title, 'The Quiet Bell');
+    expect(bible.locations, ['Quay', 'Archive', 'Bell tower']);
+  });
 
   test('an older Free Mode save keeps its frozen core details', () {
     final legacy = FreeModeRun.fromJson({

@@ -470,7 +470,7 @@ class FreeModeProposalService {
 
   FreeModeBible _parse(String source) {
     final fenced = RegExp(
-      r'```(?:json)?\\s*([\\s\\S]*?)```',
+      r'```(?:json)?\s*([\s\S]*?)```',
       caseSensitive: false,
     ).firstMatch(source)?.group(1);
     final decoded = jsonDecode(fenced ?? source);
