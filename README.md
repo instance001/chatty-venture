@@ -37,7 +37,7 @@ Release output is written to `build/app/outputs/bundle/release/app-release.aab`.
 
 Chatty-Venture deliberately ships no LLM weights in public source or ordinary builds. Import a GGUF into private app storage through the in-app local-model manager. SmolLM2-360M-Instruct is a compact starting point; larger GGUFs may be more capable but require more memory. Model weights are ignored by Git and are never stored through Git LFS.
 
-For a private Google Play release that includes the ignored Smol asset, run `./tool/build-play-bundled.ps1 -BuildNumber 1` from PowerShell and use a build number higher than every one already uploaded to Play. The script temporarily adds the model to Flutter's asset manifest, produces `build/app/outputs/bundle/release/app-release.aab`, and restores the clean source manifest afterward.
+For a private Google Play release that includes the ignored Smol asset, run `./tool/build-play-bundled.ps1 -BuildNumber 4` from PowerShell and use a build number higher than every one already uploaded to Play. The script temporarily adds the model to Flutter's asset manifest, produces `build/app/outputs/bundle/release/app-release.aab`, and restores the clean source manifest afterward.
 
 ## Licence
 
