@@ -33,11 +33,23 @@ flutter build appbundle --release
 
 Release output is written to `build/app/outputs/bundle/release/app-release.aab`.
 
+Free Mode's Android setup generation uses a llama.cpp grammar to require the
+proposal JSON fields and three acts. Structured responses bypass prose sentence
+trimming; malformed or incomplete proposals are rejected before a run starts.
+The native regression test checks these rules using llama.cpp's grammar parser,
+without loading a model. With CMake and a host C++ compiler installed, run:
+
+```powershell
+cmake -S test/native -B build/native-tests
+cmake --build build/native-tests --config Release --target generation_output_test
+ctest --test-dir build/native-tests -C Release --output-on-failure
+```
+
 ## Bring your own model
 
 Chatty-Venture deliberately ships no LLM weights in public source or ordinary builds. Import a GGUF into private app storage through the in-app local-model manager. SmolLM2-360M-Instruct is a compact starting point; larger GGUFs may be more capable but require more memory. Model weights are ignored by Git and are never stored through Git LFS.
 
-For a private Google Play release that includes the ignored Smol asset, run `./tool/build-play-bundled.ps1 -BuildNumber 4` from PowerShell and use a build number higher than every one already uploaded to Play. The script temporarily adds the model to Flutter's asset manifest, produces `build/app/outputs/bundle/release/app-release.aab`, and restores the clean source manifest afterward.
+For a private Google Play release that includes the ignored Smol asset, run `./tool/build-play-bundled.ps1 -BuildNumber 5` from PowerShell and use a build number higher than every one already uploaded to Play. The script temporarily adds the model to Flutter's asset manifest, produces `build/app/outputs/bundle/release/app-release.aab`, and restores the clean source manifest afterward.
 
 ## Licence
 

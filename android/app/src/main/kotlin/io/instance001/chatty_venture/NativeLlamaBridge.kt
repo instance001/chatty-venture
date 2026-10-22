@@ -9,10 +9,10 @@ class NativeLlamaBridge {
     fun lastError(): String = if (libraryLoaded) nativeGetLastError() else "Native llama.cpp library is unavailable."
     fun cancel() { if (libraryLoaded) nativeRequestCancel() }
     fun unload() { if (libraryLoaded) nativeUnloadModel() }
-    fun generate(requestId: String, modelPath: String, prompt: String, contextSize: Int, maxTokens: Int, callback: NativeGenerationCallback): Boolean {
+    fun generate(requestId: String, modelPath: String, prompt: String, contextSize: Int, maxTokens: Int, structuredOutput: Boolean, callback: NativeGenerationCallback): Boolean {
         if (!libraryLoaded) return false
         this.callback = callback
-        return nativeStartGeneration(requestId, modelPath, prompt, contextSize, maxTokens, 0.48, 0.86, 40, 0)
+        return nativeStartGeneration(requestId, modelPath, prompt, contextSize, maxTokens, 0.48, 0.86, 40, 0, structuredOutput)
     }
     fun onNativeToken(requestId: String, text: String) { callback?.onToken(requestId, text) }
     fun onNativeCompleted(requestId: String, text: String) { callback?.onCompleted(requestId, text) }
@@ -20,7 +20,7 @@ class NativeLlamaBridge {
     fun onNativeCancelled(requestId: String) { callback?.onCancelled(requestId) }
     external fun nativeLoadModel(modelPath: String, contextSize: Int, gpuLayers: Int): Boolean
     external fun nativeGetLastError(): String
-    external fun nativeStartGeneration(requestId: String, modelPath: String, prompt: String, contextSize: Int, maxTokens: Int, temperature: Double, topP: Double, topK: Int, gpuLayers: Int): Boolean
+    external fun nativeStartGeneration(requestId: String, modelPath: String, prompt: String, contextSize: Int, maxTokens: Int, temperature: Double, topP: Double, topK: Int, gpuLayers: Int, structuredOutput: Boolean): Boolean
     external fun nativeRequestCancel()
     external fun nativeUnloadModel()
     companion object { private val libraryLoaded = try { System.loadLibrary("chatty_llama"); true } catch (_: UnsatisfiedLinkError) { false } }

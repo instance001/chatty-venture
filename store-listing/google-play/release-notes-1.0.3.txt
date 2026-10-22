@@ -1,0 +1,2 @@
+Fixed Free Mode adventure creation with on-device models.
+Improved setup validation and recovery when adventure generation fails.

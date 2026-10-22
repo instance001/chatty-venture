@@ -473,9 +473,41 @@ class FreeModeProposalService {
       r'```(?:json)?\s*([\s\S]*?)```',
       caseSensitive: false,
     ).firstMatch(source)?.group(1);
-    final decoded = jsonDecode(fenced ?? source);
+    final Object? decoded;
+    try {
+      decoded = jsonDecode(fenced ?? source);
+    } on FormatException {
+      throw const FormatException(
+        'The narrator did not return valid adventure JSON. Please retry.',
+      );
+    }
     if (decoded is! Map) {
       throw const FormatException('Generated adventure was not an object.');
+    }
+    // Save migration may fill old optional fields, but a new proposal must
+    // actually supply them. Never turn malformed model output into saved canon.
+    for (final key in const [
+      'title',
+      'premise',
+      'problem',
+      'key_anchor',
+      'supporting_character',
+      'stakes',
+      'escalation',
+      'ending_image',
+      'flavour',
+    ]) {
+      if (decoded[key] is! String) {
+        throw FormatException('Generated adventure is missing text for $key.');
+      }
+    }
+    for (final key in const ['locations', 'objectives']) {
+      final values = decoded[key];
+      if (values is! List ||
+          values.length != 3 ||
+          values.any((value) => value is! String)) {
+        throw FormatException('Generated adventure needs exactly three $key.');
+      }
     }
     return FreeModeBible.fromJson(decoded);
   }

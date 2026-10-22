@@ -118,6 +118,8 @@ ENDING: ${ending ?? 'none'}''';
   }
 
   String _withStyleNote(String value, String? styleNote) {
+    // Delivery preferences such as "prose only" must not override setup JSON.
+    if (structuredOutput) return value;
     final style = styleNote?.trim() ?? '';
     if (style.isEmpty) return value;
     return '$value\n\nDM STYLE NOTE: $style\nTreat this as delivery guidance only. Do not change established facts, routes, objectives, or outcomes.';

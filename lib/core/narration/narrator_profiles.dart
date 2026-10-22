@@ -139,19 +139,24 @@ class LocalGgufDungeonMaster implements AiDungeonMaster {
         onToken?.call(token);
       }
     });
-    final result = await _channel.invokeMapMethod<String, dynamic>('generate', {
-      'prompt': context.toGgufPrompt(
-        template: promptTemplate,
-        styleNote: styleNote,
-      ),
-      'modelPath': modelPath,
-      // A Free Mode bible is structured JSON rather than a short scene. Give
-      // it room to finish without changing the fast, mobile-friendly turn
-      // settings used during normal play.
-      'contextSize': context.structuredOutput ? 2048 : 1536,
-      'maxTokens': context.structuredOutput ? 480 : 120,
-    });
-    await subscription.cancel();
+    Map<String, dynamic>? result;
+    try {
+      result = await _channel.invokeMapMethod<String, dynamic>('generate', {
+        'prompt': context.toGgufPrompt(
+          template: promptTemplate,
+          styleNote: styleNote,
+        ),
+        'modelPath': modelPath,
+        // A Free Mode bible is structured JSON rather than a short scene. Give
+        // it room to finish without changing the fast, mobile-friendly turn
+        // settings used during normal play.
+        'contextSize': context.structuredOutput ? 2048 : 1536,
+        'maxTokens': context.structuredOutput ? 768 : 120,
+        'structuredOutput': context.structuredOutput,
+      });
+    } finally {
+      await subscription.cancel();
+    }
     final text = result?['text'] as String? ?? draft.toString();
     if (text.trim().isEmpty) {
       throw StateError('The local narrator returned no text.');

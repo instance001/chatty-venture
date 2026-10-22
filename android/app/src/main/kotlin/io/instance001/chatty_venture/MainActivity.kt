@@ -20,10 +20,11 @@ class MainActivity : FlutterActivity() {
                     val prompt = call.argument<String>("prompt")
                     val contextSize = call.argument<Int>("contextSize") ?: 1536
                     val maxTokens = call.argument<Int>("maxTokens") ?: 120
+                    val structuredOutput = call.argument<Boolean>("structuredOutput") ?: false
                     if (modelPath.isNullOrBlank() || prompt.isNullOrBlank()) {
                         result.error("missing_generation_args", "A selected GGUF model and narrator prompt are required.", null)
                     } else {
-                        startGeneration(modelPath, prompt, contextSize, maxTokens, result)
+                        startGeneration(modelPath, prompt, contextSize, maxTokens, structuredOutput, result)
                     }
                 }
                 "cancel" -> { bridge.cancel(); result.success(null) }
@@ -50,20 +51,21 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun startGeneration(modelPath: String, prompt: String, contextSize: Int, maxTokens: Int, result: MethodChannel.Result) {
+    private fun startGeneration(modelPath: String, prompt: String, contextSize: Int, maxTokens: Int, structuredOutput: Boolean, result: MethodChannel.Result) {
         Thread {
             if (!bridge.loadModel(modelPath, contextSize)) {
                 runOnUiThread { result.error("model_load_failed", bridge.lastError(), null) }
                 return@Thread
             }
             val requestId = UUID.randomUUID().toString()
-            val started = bridge.generate(requestId, modelPath, prompt, contextSize, maxTokens, object : NativeGenerationCallback {
+            var responded = false
+            val started = bridge.generate(requestId, modelPath, prompt, contextSize, maxTokens, structuredOutput, object : NativeGenerationCallback {
                 override fun onToken(requestId: String, text: String) { runOnUiThread { eventSink?.success(mapOf("type" to "token", "requestId" to requestId, "text" to text)) } }
-                override fun onCompleted(requestId: String, text: String) { runOnUiThread { result.success(mapOf("text" to text)) } }
-                override fun onFailed(requestId: String, message: String) { runOnUiThread { result.error("generation_failed", message, null) } }
-                override fun onCancelled(requestId: String) { runOnUiThread { result.error("generation_cancelled", "Narration cancelled.", null) } }
+                override fun onCompleted(requestId: String, text: String) { responded = true; runOnUiThread { result.success(mapOf("text" to text)) } }
+                override fun onFailed(requestId: String, message: String) { responded = true; runOnUiThread { result.error("generation_failed", message, null) } }
+                override fun onCancelled(requestId: String) { responded = true; runOnUiThread { result.error("generation_cancelled", "Narration cancelled.", null) } }
             })
-            if (!started) runOnUiThread { result.error("generation_start_failed", bridge.lastError(), null) }
+            if (!started && !responded) runOnUiThread { result.error("generation_start_failed", bridge.lastError(), null) }
         }.start()
     }
 }

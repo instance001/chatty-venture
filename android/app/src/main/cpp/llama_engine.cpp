@@ -17,6 +17,7 @@
 #include "common.h"
 #include "llama.h"
 #include "sampling.h"
+#include "generation_output.h"
 
 namespace {
 
@@ -47,6 +48,7 @@ struct GenerationOptions {
     float top_p = 0.95f;
     int top_k = 40;
     int gpu_layers = 0;
+    bool structured_output = false;
 };
 
 bool is_valid_utf8(const char * text) {
@@ -79,14 +81,6 @@ bool is_valid_utf8(const char * text) {
     }
 
     return true;
-}
-
-std::string finish_at_sentence_boundary(const std::string & text) {
-    const size_t boundary = text.find_last_of(".!?");
-    if (boundary == std::string::npos) {
-        return text;
-    }
-    return text.substr(0, boundary + 1);
 }
 
 std::string jstring_to_utf8(JNIEnv * env, jstring value) {
@@ -343,6 +337,9 @@ bool stream_completion_locked(
     sampling_params.penalty_repeat = 1.05f;
     sampling_params.penalty_last_n = 64;
     sampling_params.n_prev = 64;
+    if (options.structured_output) {
+        sampling_params.grammar = common_grammar(COMMON_GRAMMAR_TYPE_USER, chatty::kFreeModeGrammar);
+    }
     g_sampler = common_sampler_init(g_model, sampling_params);
     if (g_sampler == nullptr) {
         set_last_error("llama.cpp failed to initialize the sampler for this request.");
@@ -364,6 +361,11 @@ bool stream_completion_locked(
         return false;
     }
 
+    if (prompt_tokens.size() + options.max_tokens > llama_n_ctx(g_context)) {
+        emit_java_message(env, bridge, failed_method, request_id, "The prompt is too long for the selected context size.");
+        return false;
+    }
+
     if (!decode_tokens(prompt_tokens, 0, true)) {
         emit_java_message(env, bridge, failed_method, request_id, g_last_error);
         return false;
@@ -372,6 +374,7 @@ bool stream_completion_locked(
     std::string assembled;
     std::string utf8_cache;
     llama_pos current_position = static_cast<llama_pos>(prompt_tokens.size());
+    bool reached_end = false;
 
     for (int i = 0; i < options.max_tokens; ++i) {
         if (g_cancel_requested.load()) {
@@ -383,6 +386,7 @@ bool stream_completion_locked(
         common_sampler_accept(g_sampler, token_id, true);
 
         if (llama_vocab_is_eog(llama_model_get_vocab(g_model), token_id)) {
+            reached_end = true;
             break;
         }
 
@@ -404,10 +408,16 @@ bool stream_completion_locked(
         }
     }
 
+    if (options.structured_output && !reached_end) {
+        emit_java_message(env, bridge, failed_method, request_id,
+            "Adventure setup exceeded its output limit. Please retry.");
+        return false;
+    }
+
     if (assembled.empty()) {
         assembled = "(no visible response)";
     } else {
-        assembled = finish_at_sentence_boundary(assembled);
+        assembled = chatty::finish_generation_output(assembled, options.structured_output);
     }
 
     emit_java_message(env, bridge, completed_method, request_id, assembled);
@@ -471,7 +481,8 @@ Java_io_instance001_chatty_1venture_NativeLlamaBridge_nativeStartGeneration(
         jdouble temperature,
         jdouble topP,
         jint topK,
-        jint gpuLayers) {
+        jint gpuLayers,
+        jboolean structuredOutput) {
     if (requestId == nullptr || modelPath == nullptr || prompt == nullptr) {
         return JNI_FALSE;
     }
@@ -508,6 +519,7 @@ Java_io_instance001_chatty_1venture_NativeLlamaBridge_nativeStartGeneration(
     options.top_p = topP > 0.0 ? static_cast<float>(topP) : 0.95f;
     options.top_k = topK > 0 ? topK : 40;
     options.gpu_layers = gpuLayers;
+    options.structured_output = structuredOutput == JNI_TRUE;
 
     std::lock_guard<std::mutex> lock(g_mutex);
     if (!load_model_locked(model_path, options.context_size, options.gpu_layers)) {
