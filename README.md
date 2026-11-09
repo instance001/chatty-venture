@@ -36,7 +36,15 @@ Release output is written to `build/app/outputs/bundle/release/app-release.aab`.
 Free Mode's Android setup generation uses a llama.cpp grammar to require the
 proposal JSON fields and three acts. Structured responses bypass prose sentence
 trimming; malformed or incomplete proposals are rejected before a run starts.
-The native regression test checks these rules using llama.cpp's grammar parser,
+Local and cloud narration is buffered until host admission checks pass, so
+instruction echoes cannot flash as streaming drafts before rejection. The guard
+checks known directives, packet labels, and eight-word copies of active prompt
+instructions; rejected prose is not added to chat or Free Mode history. Retry
+and explicit fallback reuse the committed turn. Generated proposal fields are
+also checked for instruction echoes before preview. These are heuristic checks,
+not a guarantee of story quality or semantic consistency with canon.
+
+The native regression test checks structured output using llama.cpp's grammar parser,
 without loading a model. With CMake and a host C++ compiler installed, run:
 
 ```powershell

@@ -33,7 +33,7 @@ class _FencedProposalNarrator implements AiDungeonMaster {
   }) async => '''```json
 {
   "title": "The Quiet Bell",
-  "premise": "A silent bell leaves the harbour unguarded.",
+  "premise": "You find the harbour bell silent before the tide turns.",
   "problem": "The bell rope has vanished.",
   "key_anchor": "a blue knot",
   "supporting_character": "Iris the keeper",
@@ -116,6 +116,15 @@ void main() {
     expect(restored.turn, 7);
     expect(restored.facts, {'missing_name_found'});
     expect(restored.threads['debt']!.status, 'Open');
+  });
+
+  test('a turn saved as decimal text retains its scene and progress', () {
+    final restored = StorySaveCodec.decode(
+      '{"save_version":1,"state":{"turn":"2","scene_id":"old_archive","facts":["followed"]}}',
+    );
+    expect(restored.sceneId, 'old_archive');
+    expect(restored.turn, 2);
+    expect(restored.facts, contains('followed'));
   });
 
   test('the GGUF formatter preserves the known-good narrator prompt', () {
@@ -253,6 +262,13 @@ void main() {
       expect(firstBeat.completed, isFalse);
       expect(firstBeat.run.act, 0);
       expect(firstBeat.run.completedStepsForAct(0), 1);
+      for (final bareAction in [
+        'discover',
+        'I discover',
+        'discover discover',
+      ]) {
+        expect(reducer.apply(firstBeat.run, bareAction).progressed, isFalse);
+      }
 
       // One small typo in each useful word is still a valid mobile action.
       final advanced = reducer.apply(firstBeat.run, 'I finde the blue roep.');

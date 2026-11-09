@@ -86,8 +86,11 @@ class _ChattyVentureAppState extends State<ChattyVentureApp> {
     ),
   );
 
-  void _openAdventure({StoryTemplate? template, bool freeMode = false}) {
-    _navigatorKey.currentState?.push(
+  Future<void> _openAdventure({
+    StoryTemplate? template,
+    bool freeMode = false,
+  }) async {
+    await _navigatorKey.currentState?.push<void>(
       MaterialPageRoute(
         builder: (context) => AdventureScreen(
           controller: controller,

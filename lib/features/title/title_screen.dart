@@ -7,6 +7,8 @@ import '../adventure/adventure_controller.dart';
 import 'about_screen.dart';
 import 'contact_publisher_screen.dart';
 
+enum _SaveStatus { missing, available, unreadable }
+
 class TitleScreen extends StatefulWidget {
   const TitleScreen({
     super.key,
@@ -21,9 +23,9 @@ class TitleScreen extends StatefulWidget {
   final AdventureController controller;
   final bool darkMode;
   final VoidCallback onToggleTheme;
-  final VoidCallback onContinue;
-  final ValueChanged<StoryTemplate> onAdventure;
-  final VoidCallback onFreeMode;
+  final Future<void> Function() onContinue;
+  final Future<void> Function(StoryTemplate) onAdventure;
+  final Future<void> Function() onFreeMode;
 
   @override
   State<TitleScreen> createState() => _TitleScreenState();
@@ -33,7 +35,7 @@ class _TitleScreenState extends State<TitleScreen> {
   static final _repository = Uri.parse(
     'https://github.com/Instance001/chatty-venture',
   );
-  bool? hasSavedAdventure;
+  var _saveStatus = _SaveStatus.missing;
 
   @override
   void initState() {
@@ -42,8 +44,23 @@ class _TitleScreenState extends State<TitleScreen> {
   }
 
   Future<void> _loadSavedState() async {
-    final saved = await widget.controller.saves.load();
-    if (mounted) setState(() => hasSavedAdventure = saved != null);
+    try {
+      final saved = await widget.controller.saves.readSnapshot();
+      if (mounted) {
+        setState(
+          () => _saveStatus = saved == null
+              ? _SaveStatus.missing
+              : _SaveStatus.available,
+        );
+      }
+    } on FormatException {
+      if (mounted) setState(() => _saveStatus = _SaveStatus.unreadable);
+    }
+  }
+
+  Future<void> _visitAdventure(Future<void> Function() open) async {
+    await open();
+    if (mounted) await _loadSavedState();
   }
 
   Future<void> _open(Uri uri) async {
@@ -97,9 +114,16 @@ class _TitleScreenState extends State<TitleScreen> {
                     ),
                   ),
                   const SizedBox(height: 42),
-                  if (hasSavedAdventure == true) ...[
+                  if (_saveStatus == _SaveStatus.unreadable)
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 12),
+                      child: Text(
+                        'Your saved adventure could not be read. Choose a new adventure to start again.',
+                      ),
+                    ),
+                  if (_saveStatus == _SaveStatus.available) ...[
                     FilledButton.icon(
-                      onPressed: widget.onContinue,
+                      onPressed: () => _visitAdventure(widget.onContinue),
                       icon: const Icon(Icons.play_arrow_rounded),
                       label: const Text('Continue'),
                     ),
@@ -109,7 +133,9 @@ class _TitleScreenState extends State<TitleScreen> {
                     (adventure) => Padding(
                       padding: const EdgeInsets.only(bottom: 10),
                       child: OutlinedButton(
-                        onPressed: () => widget.onAdventure(adventure),
+                        onPressed: () => _visitAdventure(
+                          () => widget.onAdventure(adventure),
+                        ),
                         style: OutlinedButton.styleFrom(
                           padding: const EdgeInsets.symmetric(
                             horizontal: 18,
@@ -138,7 +164,7 @@ class _TitleScreenState extends State<TitleScreen> {
                     ),
                   ),
                   OutlinedButton.icon(
-                    onPressed: widget.onFreeMode,
+                    onPressed: () => _visitAdventure(widget.onFreeMode),
                     icon: const Icon(Icons.auto_awesome),
                     label: const Text('Free Mode'),
                   ),

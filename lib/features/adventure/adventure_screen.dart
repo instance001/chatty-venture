@@ -82,7 +82,8 @@ class _AdventureScreenState extends State<AdventureScreen> {
     final bundledSmol = await modelStore.ensureBundledSmol();
     models = await modelStore.load();
     selectedModelId = await modelStore.selectedId();
-    if (selectedModelId == null && bundledSmol != null) {
+    if (bundledSmol != null &&
+        !models.any((model) => model.id == selectedModelId)) {
       selectedModelId = bundledSmol.id;
       await modelStore.select(selectedModelId);
     }
@@ -312,15 +313,13 @@ class _AdventureScreenState extends State<AdventureScreen> {
 
   Future<void> _editNarratorStyle() async {
     final settings = NarratorStyleSettings();
-    final editor = TextEditingController(text: await settings.load());
-    if (!mounted) {
-      editor.dispose();
-      return;
-    }
+    var draft = await settings.load();
+    if (!mounted) return;
     final result = await showDialog<String>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('Dungeon Master style'),
+        scrollable: true,
         content: SizedBox(
           width: 560,
           child: Column(
@@ -331,8 +330,9 @@ class _AdventureScreenState extends State<AdventureScreen> {
                 'Optional guidance for the narrator’s voice. It applies to both Cloud and Local GGUF narration, including Free Mode. The story ledger remains the source of truth.',
               ),
               const SizedBox(height: 12),
-              TextField(
-                controller: editor,
+              TextFormField(
+                initialValue: draft,
+                onChanged: (value) => draft = value,
                 minLines: 3,
                 maxLines: 6,
                 maxLength: 400,
@@ -364,7 +364,7 @@ class _AdventureScreenState extends State<AdventureScreen> {
           ),
           FilledButton(
             onPressed: () async {
-              await settings.save(editor.text);
+              await settings.save(draft);
               if (dialogContext.mounted) {
                 Navigator.pop(dialogContext, 'saved');
               }
@@ -374,7 +374,6 @@ class _AdventureScreenState extends State<AdventureScreen> {
         ],
       ),
     );
-    editor.dispose();
     if (!mounted || result == null) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -389,18 +388,16 @@ class _AdventureScreenState extends State<AdventureScreen> {
 
   Future<void> _editNarrationPrompt(NarratorPromptLane lane) async {
     final settings = NarratorPromptSettings();
-    final editor = TextEditingController(text: await settings.load(lane));
-    if (!mounted) {
-      editor.dispose();
-      return;
-    }
+    final initialPrompt = await settings.load(lane);
+    if (!mounted) return;
+    var draft = initialPrompt;
+    String? error;
     final laneName = lane == NarratorPromptLane.cloud
         ? 'Cloud prompt'
         : 'Local GGUF prompt';
     final result = await showDialog<String>(
       context: context,
       builder: (dialogContext) {
-        String? error;
         return StatefulBuilder(
           builder: (dialogContext, update) => AlertDialog(
             title: Text(laneName),
@@ -417,8 +414,9 @@ class _AdventureScreenState extends State<AdventureScreen> {
                           : 'Keep {{story_packet}} exactly once. It is replaced by the canonical story packet for each turn.',
                     ),
                     const SizedBox(height: 12),
-                    TextField(
-                      controller: editor,
+                    TextFormField(
+                      initialValue: initialPrompt,
+                      onChanged: (value) => draft = value,
                       minLines: 8,
                       maxLines: 14,
                       autocorrect: false,
@@ -449,7 +447,7 @@ class _AdventureScreenState extends State<AdventureScreen> {
               ),
               FilledButton(
                 onPressed: () async {
-                  final prompt = editor.text.trim();
+                  final prompt = draft.trim();
                   if (prompt.isEmpty) {
                     update(() => error = 'Prompt cannot be empty.');
                     return;
@@ -476,7 +474,6 @@ class _AdventureScreenState extends State<AdventureScreen> {
         );
       },
     );
-    editor.dispose();
     if (!mounted || result == null) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -495,9 +492,9 @@ class _AdventureScreenState extends State<AdventureScreen> {
     var provider = existing.provider;
     var hasKey = await keys.has(provider);
     if (!mounted) return false;
-    final endpoint = TextEditingController(text: existing.baseUrl);
-    final model = TextEditingController(text: existing.model);
-    final apiKey = TextEditingController();
+    var endpoint = existing.baseUrl;
+    var model = existing.model;
+    var apiKey = '';
     final saved = await showDialog<bool>(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -529,24 +526,30 @@ class _AdventureScreenState extends State<AdventureScreen> {
                     final defaults = cloudProviderDefaults(value);
                     update(() {
                       provider = value;
-                      endpoint.text = defaults.baseUrl;
-                      model.text = defaults.model;
+                      endpoint = defaults.baseUrl;
+                      model = defaults.model;
                     });
                     final nextHasKey = await keys.has(value);
-                    update(() => hasKey = nextHasKey);
+                    if (context.mounted && provider == value) {
+                      update(() => hasKey = nextHasKey);
+                    }
                   },
                 ),
-                TextField(
-                  controller: endpoint,
+                TextFormField(
+                  key: ValueKey('endpoint-$provider'),
+                  initialValue: endpoint,
+                  onChanged: (value) => endpoint = value,
                   keyboardType: TextInputType.url,
                   decoration: const InputDecoration(labelText: 'Base URL'),
                 ),
-                TextField(
-                  controller: model,
+                TextFormField(
+                  key: ValueKey('model-$provider'),
+                  initialValue: model,
+                  onChanged: (value) => model = value,
                   decoration: const InputDecoration(labelText: 'Model'),
                 ),
-                TextField(
-                  controller: apiKey,
+                TextFormField(
+                  onChanged: (value) => apiKey = value,
                   obscureText: true,
                   autocorrect: false,
                   enableSuggestions: false,
@@ -573,18 +576,10 @@ class _AdventureScreenState extends State<AdventureScreen> {
         ),
       ),
     );
-    if (saved != true) {
-      endpoint.dispose();
-      model.dispose();
-      apiKey.dispose();
-      return false;
-    }
-    final baseUrl = endpoint.text.trim();
-    final modelName = model.text.trim();
-    final suppliedKey = apiKey.text.trim();
-    endpoint.dispose();
-    model.dispose();
-    apiKey.dispose();
+    if (saved != true) return false;
+    final baseUrl = endpoint.trim();
+    final modelName = model.trim();
+    final suppliedKey = apiKey.trim();
     final providerHasKey = await keys.has(provider);
     if (baseUrl.isEmpty ||
         modelName.isEmpty ||
@@ -727,12 +722,13 @@ class _AdventureScreenState extends State<AdventureScreen> {
   }
 
   Future<void> _clearSavedAdventureData(AdventureController game) async {
+    game.resetAfterPrivateDataClear();
     await game.saves.clear();
     await (await SharedPreferences.getInstance()).remove('selected_adventure');
-    game.resetAfterPrivateDataClear();
   }
 
   Future<void> _clearAllPrivateData(AdventureController game) async {
+    game.resetAfterPrivateDataClear();
     await modelStore.clearAllModels();
     await game.saves.clear();
     await CloudKeyService().deleteAllKnownProviders(cloudProviders.keys);
@@ -744,7 +740,6 @@ class _AdventureScreenState extends State<AdventureScreen> {
     fallbackKind = NarratorFallbackKind.ask;
     _applyNarrator(profile);
     _applyFallback();
-    game.resetAfterPrivateDataClear();
     if (mounted) setState(() {});
   }
 
@@ -1031,7 +1026,9 @@ class _AdventureScreenState extends State<AdventureScreen> {
                             spacing: 4,
                             children: [
                               TextButton(
-                                onPressed: game.retryNarration,
+                                onPressed: isPreparingNarrator
+                                    ? null
+                                    : game.retryNarration,
                                 style: TextButton.styleFrom(
                                   foregroundColor: const Color(0xFF4A231E),
                                 ),
@@ -1086,75 +1083,13 @@ class _AdventureScreenState extends State<AdventureScreen> {
                     ),
                   ),
                 ),
-              if (game.freeModeRun case final freeRun?
-                  when !freeRun.isComplete &&
-                      freeRun.completedStepsForAct(freeRun.act) == 0)
+              if (game.freeModeRun case final freeRun? when !freeRun.isComplete)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 6, 16, 4),
                   child: OutlinedButton.icon(
                     onPressed: () => _showFreeModeHint(freeRun),
                     icon: const Icon(Icons.lightbulb_outline),
                     label: const Text('Hint'),
-                  ),
-                ),
-              if (game.freeModeRun case final freeRun? when !freeRun.isComplete)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 4, 24, 2),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: freeModeActSteps(freeRun, freeRun.act)
-                        .asMap()
-                        .entries
-                        .map(
-                          (entry) => Padding(
-                            padding: const EdgeInsets.only(bottom: 4),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  entry.key <
-                                          freeRun.completedStepsForAct(
-                                            freeRun.act,
-                                          )
-                                      ? Icons.check_circle
-                                      : Icons.radio_button_unchecked,
-                                  size: 18,
-                                  color:
-                                      entry.key <
-                                          freeRun.completedStepsForAct(
-                                            freeRun.act,
-                                          )
-                                      ? const Color(0xFF83C992)
-                                      : Theme.of(
-                                          context,
-                                        ).colorScheme.onSurfaceVariant,
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    entry.value,
-                                    style: TextStyle(
-                                      color:
-                                          entry.key <
-                                              freeRun.completedStepsForAct(
-                                                freeRun.act,
-                                              )
-                                          ? const Color(0xFF83C992)
-                                          : null,
-                                      decoration:
-                                          entry.key <
-                                              freeRun.completedStepsForAct(
-                                                freeRun.act,
-                                              )
-                                          ? TextDecoration.lineThrough
-                                          : null,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        )
-                        .toList(),
                   ),
                 ),
               if (game.freeModeRun == null &&
@@ -1197,61 +1132,58 @@ class _AdventureScreenState extends State<AdventureScreen> {
                   ),
                 ),
               if (game.state.ending != null)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                  child: Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(20),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Text(
-                            'Venture complete',
-                            style: Theme.of(context).textTheme.titleLarge,
-                          ),
-                          const SizedBox(height: 8),
-                          Text(game.state.ending!),
-                          if (game.freeModeRun case final freeRun?) ...[
-                            const SizedBox(height: 12),
+                Flexible(
+                  flex: 3,
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                    child: Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(20),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
                             Text(
-                              freeRun.bible.endingImage,
-                              style: Theme.of(context).textTheme.titleMedium,
+                              'Venture complete',
+                              style: Theme.of(context).textTheme.titleLarge,
                             ),
                             const SizedBox(height: 8),
-                            Text(
-                              'Alongside ${freeRun.bible.supportingCharacter}.',
-                            ),
-                            if (freeRun.epilogue case final afterword?) ...[
+                            Text(game.state.ending!),
+                            if (game.freeModeRun case final freeRun?) ...[
                               const SizedBox(height: 12),
                               Text(
-                                'AFTERWORD',
-                                style: Theme.of(context).textTheme.labelLarge,
+                                freeRun.bible.endingImage,
+                                style: Theme.of(context).textTheme.titleMedium,
                               ),
-                              const SizedBox(height: 4),
-                              Text(afterword),
+                              const SizedBox(height: 8),
+                              Text(
+                                'Local character: ${freeRun.bible.supportingCharacter}',
+                              ),
+                              if (freeRun.epilogue case final afterword?) ...[
+                                const SizedBox(height: 12),
+                                Text(
+                                  'AFTERWORD',
+                                  style: Theme.of(context).textTheme.labelLarge,
+                                ),
+                                const SizedBox(height: 4),
+                                Text(afterword),
+                              ],
                             ],
-                            const SizedBox(height: 12),
-                            ...freeRun.completedObjectives.map(
-                              (act) => Text(
-                                'Act ${act + 1} complete: ${freeRun.bible.objectives[act]}',
+                            const SizedBox(height: 16),
+                            FilledButton.icon(
+                              onPressed: () => _chooseAdventure(game),
+                              icon: const Icon(Icons.explore_outlined),
+                              label: const Text('Start another venture'),
+                            ),
+                            if (game.freeModeRun != null) ...[
+                              const SizedBox(height: 8),
+                              OutlinedButton.icon(
+                                onPressed: game.restart,
+                                icon: const Icon(Icons.replay_outlined),
+                                label: const Text('Begin this adventure again'),
                               ),
-                            ),
+                            ],
                           ],
-                          const SizedBox(height: 16),
-                          FilledButton.icon(
-                            onPressed: () => _chooseAdventure(game),
-                            icon: const Icon(Icons.explore_outlined),
-                            label: const Text('Start another venture'),
-                          ),
-                          if (game.freeModeRun != null) ...[
-                            const SizedBox(height: 8),
-                            OutlinedButton.icon(
-                              onPressed: game.restart,
-                              icon: const Icon(Icons.replay_outlined),
-                              label: const Text('Begin this adventure again'),
-                            ),
-                          ],
-                        ],
+                        ),
                       ),
                     ),
                   ),
@@ -1301,35 +1233,49 @@ class _AdventureScreenState extends State<AdventureScreen> {
     },
   );
 
-  Future<void> _showFreeModeHint(FreeModeRun run) => showModalBottomSheet<void>(
-    context: context,
-    showDragHandle: true,
-    builder: (context) => Padding(
-      padding: const EdgeInsets.fromLTRB(24, 4, 24, 32),
-      child: Card(
-        child: Padding(
-          padding: const EdgeInsets.all(18),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'ACT ${run.act + 1} OF 3',
-                style: Theme.of(context).textTheme.labelLarge,
+  Future<void> _showFreeModeHint(FreeModeRun run) {
+    final steps = freeModeActSteps(run, run.act);
+    final completed = run.completedStepsForAct(run.act);
+    return showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.fromLTRB(24, 4, 24, 24),
+          children: [
+            Text(
+              'Act ${run.act + 1} of 3 · ${run.bible.locations[run.act]}',
+              style: Theme.of(context).textTheme.labelLarge,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              run.bible.objectives[run.act],
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            for (var index = 0; index < steps.length; index++)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(
+                  index < completed
+                      ? Icons.check_circle
+                      : Icons.radio_button_unchecked,
+                  semanticLabel: index < completed ? 'Completed' : 'Remaining',
+                ),
+                title: Text(
+                  steps[index],
+                  style: TextStyle(
+                    decoration: index < completed
+                        ? TextDecoration.lineThrough
+                        : null,
+                  ),
+                ),
               ),
-              const SizedBox(height: 8),
-              Text(
-                run.bible.objectives[run.act],
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
-              const SizedBox(height: 6),
-              Text('Current location: ${run.bible.locations[run.act]}'),
-            ],
-          ),
+          ],
         ),
       ),
-    ),
-  );
+    );
+  }
 
   Future<void> _showGuidedHint(
     AdventureController game,
@@ -1377,9 +1323,7 @@ class _AdventureScreenState extends State<AdventureScreen> {
           ListTile(
             leading: const Icon(Icons.auto_stories_outlined),
             title: const Text('Free Mode'),
-            subtitle: const Text(
-              'A fresh three-act adventure made for this run.',
-            ),
+            subtitle: const Text('A three-act adventure for one traveller.'),
             onTap: () {
               Navigator.pop(context);
               Future<void>.microtask(() => _startFreeMode(game));
@@ -1554,7 +1498,7 @@ class _AdventureScreenState extends State<AdventureScreen> {
                 const SizedBox(height: 12),
                 Text('Problem: ${current.problem}'),
                 Text('Key detail: ${current.keyAnchor}'),
-                Text('With: ${current.supportingCharacter}'),
+                Text('Local character: ${current.supportingCharacter}'),
                 const SizedBox(height: 8),
                 Text('What is at stake: ${current.stakes}'),
                 Text('Pressure: ${current.escalation}'),
@@ -1564,7 +1508,7 @@ class _AdventureScreenState extends State<AdventureScreen> {
                   Padding(
                     padding: const EdgeInsets.only(bottom: 8),
                     child: Text(
-                      'Act ${index + 1} — ${current.locations[index]}\n${current.objectives[index]}',
+                      'Act ${index + 1} — ${current.locations[index]}',
                     ),
                   ),
               ],
@@ -1597,138 +1541,171 @@ class _AdventureScreenState extends State<AdventureScreen> {
     FreeModeBible bible,
     FreeModeTemplate template,
   ) async {
-    final title = TextEditingController(text: bible.title);
-    final premise = TextEditingController(text: bible.premise);
-    final problem = TextEditingController(text: bible.problem);
-    final anchor = TextEditingController(text: bible.keyAnchor);
-    final supportingCharacter = TextEditingController(
-      text: bible.supportingCharacter,
-    );
-    final stakes = TextEditingController(text: bible.stakes);
-    final escalation = TextEditingController(text: bible.escalation);
-    final endingImage = TextEditingController(text: bible.endingImage);
-    final flavour = TextEditingController(text: bible.flavour);
-    final locations = bible.locations
-        .map((value) => TextEditingController(text: value))
-        .toList();
-    final objectives = bible.objectives
-        .map((value) => TextEditingController(text: value))
-        .toList();
-    final result = await showDialog<FreeModeBible>(
+    var title = bible.title;
+    var premise = bible.premise;
+    var problem = bible.problem;
+    var anchor = bible.keyAnchor;
+    var supportingCharacter = bible.supportingCharacter;
+    var stakes = bible.stakes;
+    var escalation = bible.escalation;
+    var endingImage = bible.endingImage;
+    var flavour = bible.flavour;
+    final locations = List.of(bible.locations);
+    final objectives = List.of(bible.objectives);
+    String? editError;
+    return showDialog<FreeModeBible>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Edit adventure'),
-        content: SizedBox(
-          width: 560,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: title,
-                  decoration: const InputDecoration(labelText: 'Title'),
-                ),
-                TextField(
-                  controller: premise,
-                  decoration: const InputDecoration(labelText: 'Premise'),
-                ),
-                TextField(
-                  controller: problem,
-                  decoration: const InputDecoration(labelText: 'Problem'),
-                ),
-                TextField(
-                  controller: anchor,
-                  decoration: const InputDecoration(labelText: 'Key detail'),
-                ),
-                TextField(
-                  controller: supportingCharacter,
-                  decoration: const InputDecoration(
-                    labelText: 'Supporting character',
+      builder: (context) => StatefulBuilder(
+        builder: (context, update) => AlertDialog(
+          title: const Text('Edit adventure'),
+          content: SizedBox(
+            width: 560,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextFormField(
+                    initialValue: title,
+                    onChanged: (value) => title = value,
+                    decoration: const InputDecoration(labelText: 'Title'),
                   ),
-                ),
-                TextField(
-                  controller: stakes,
-                  decoration: const InputDecoration(
-                    labelText: 'What is at stake',
-                  ),
-                ),
-                TextField(
-                  controller: escalation,
-                  decoration: const InputDecoration(labelText: 'Escalation'),
-                ),
-                TextField(
-                  controller: endingImage,
-                  decoration: const InputDecoration(labelText: 'Ending image'),
-                ),
-                TextField(
-                  controller: flavour,
-                  decoration: const InputDecoration(labelText: 'Flavour'),
-                ),
-                for (var index = 0; index < 3; index++) ...[
-                  TextField(
-                    controller: locations[index],
-                    decoration: InputDecoration(
-                      labelText: 'Act ${index + 1} location',
+                  TextFormField(
+                    initialValue: premise,
+                    onChanged: (value) => premise = value,
+                    decoration: const InputDecoration(
+                      labelText: 'Premise (start with “You”)',
                     ),
                   ),
-                  TextField(
-                    controller: objectives[index],
-                    decoration: InputDecoration(
-                      labelText: 'Act ${index + 1} objective',
+                  TextFormField(
+                    initialValue: problem,
+                    onChanged: (value) => problem = value,
+                    decoration: const InputDecoration(labelText: 'Problem'),
+                  ),
+                  TextFormField(
+                    initialValue: anchor,
+                    onChanged: (value) => anchor = value,
+                    decoration: const InputDecoration(labelText: 'Key detail'),
+                  ),
+                  TextFormField(
+                    initialValue: supportingCharacter,
+                    onChanged: (value) => supportingCharacter = value,
+                    decoration: const InputDecoration(
+                      labelText: 'Someone you meet',
+                    ),
+                  ),
+                  TextFormField(
+                    initialValue: stakes,
+                    onChanged: (value) => stakes = value,
+                    decoration: const InputDecoration(
+                      labelText: 'What is at stake',
+                    ),
+                  ),
+                  TextFormField(
+                    initialValue: escalation,
+                    onChanged: (value) => escalation = value,
+                    decoration: const InputDecoration(labelText: 'Escalation'),
+                  ),
+                  TextFormField(
+                    initialValue: endingImage,
+                    onChanged: (value) => endingImage = value,
+                    decoration: const InputDecoration(
+                      labelText: 'Ending image',
+                    ),
+                  ),
+                  TextFormField(
+                    initialValue: flavour,
+                    onChanged: (value) => flavour = value,
+                    decoration: const InputDecoration(labelText: 'Flavour'),
+                  ),
+                  for (var index = 0; index < 3; index++) ...[
+                    TextFormField(
+                      initialValue: locations[index],
+                      onChanged: (value) => locations[index] = value,
+                      decoration: InputDecoration(
+                        labelText: 'Act ${index + 1} location',
+                      ),
+                    ),
+                  ],
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.lightbulb_outline),
+                    label: const Text('Hint'),
+                    onPressed: () => showDialog<void>(
+                      context: context,
+                      builder: (context) => AlertDialog(
+                        title: const Text('Act objectives'),
+                        content: SingleChildScrollView(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              for (
+                                var index = 0;
+                                index < objectives.length;
+                                index++
+                              )
+                                TextFormField(
+                                  initialValue: objectives[index],
+                                  onChanged: (value) =>
+                                      objectives[index] = value,
+                                  decoration: InputDecoration(
+                                    labelText: 'Act ${index + 1} objective',
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(context),
+                            child: const Text('Done'),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ],
-              ],
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(
-              context,
-              FreeModeBible(
-                title: title.text.trim(),
-                premise: premise.text.trim(),
-                problem: problem.text.trim(),
-                keyAnchor: anchor.text.trim(),
-                supportingCharacter: supportingCharacter.text.trim(),
-                stakes: stakes.text.trim(),
-                escalation: escalation.text.trim(),
-                endingImage: endingImage.text.trim(),
-                flavour: flavour.text.trim(),
-                locations: locations
-                    .map((controller) => controller.text.trim())
-                    .toList(),
-                objectives: objectives
-                    .map((controller) => controller.text.trim())
-                    .toList(),
               ),
             ),
-            child: const Text('Use these details'),
           ),
-        ],
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final edited = FreeModeBible(
+                  title: title.trim(),
+                  premise: premise.trim(),
+                  problem: problem.trim(),
+                  keyAnchor: anchor.trim(),
+                  supportingCharacter: supportingCharacter.trim(),
+                  stakes: stakes.trim(),
+                  escalation: escalation.trim(),
+                  endingImage: endingImage.trim(),
+                  flavour: flavour.trim(),
+                  locations: locations.map((value) => value.trim()).toList(),
+                  objectives: objectives.map((value) => value.trim()).toList(),
+                );
+                final error = !edited.isUsable
+                    ? 'Fill in all adventure details.'
+                    : edited.setupError;
+                if (error != null) {
+                  update(() => editError = error);
+                  return;
+                }
+                Navigator.pop(context, edited);
+              },
+              child: const Text('Use these details'),
+            ),
+            if (editError != null)
+              Text(
+                editError!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+          ],
+        ),
       ),
     );
-    for (final controller in [
-      title,
-      premise,
-      problem,
-      anchor,
-      supportingCharacter,
-      stakes,
-      escalation,
-      endingImage,
-      flavour,
-      ...locations,
-      ...objectives,
-    ]) {
-      controller.dispose();
-    }
-    return result?.isUsable == true ? result : null;
   }
 
   void _journal(
@@ -1759,7 +1736,7 @@ class _AdventureScreenState extends State<AdventureScreen> {
             ),
             Text(freeRun.bible.premise),
             const SizedBox(height: 8),
-            Text('With ${freeRun.bible.supportingCharacter}'),
+            Text('Local character: ${freeRun.bible.supportingCharacter}'),
             Text('Stakes: ${freeRun.bible.stakes}'),
             Text('Pressure: ${freeRun.bible.escalation}'),
             if (freeRun.history.isNotEmpty) ...[
@@ -1785,17 +1762,19 @@ class _AdventureScreenState extends State<AdventureScreen> {
               ),
             ),
           const SizedBox(height: 12),
-          Text('RECENTLY', style: Theme.of(context).textTheme.labelMedium),
-          const SizedBox(height: 8),
-          ...game.state.recap.reversed
-              .take(5)
-              .map(
-                (line) => Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Text('• $line'),
+          if (game.freeModeRun == null) ...[
+            Text('RECENTLY', style: Theme.of(context).textTheme.labelMedium),
+            const SizedBox(height: 8),
+            ...game.state.recap.reversed
+                .take(5)
+                .map(
+                  (line) => Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Text('• $line'),
+                  ),
                 ),
-              ),
-          const SizedBox(height: 12),
+            const SizedBox(height: 12),
+          ],
           Text('DM', style: Theme.of(context).textTheme.labelMedium),
           Text('${game.narrator.label} · model-agnostic narrator seam'),
           const SizedBox(height: 12),

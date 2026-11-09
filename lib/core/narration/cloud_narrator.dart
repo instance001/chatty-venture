@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'cloud_key_service.dart';
 import 'narrator.dart';
+import 'narration_guard.dart';
 import 'narrator_prompt_settings.dart';
 import 'narrator_style_settings.dart';
 
@@ -160,13 +161,18 @@ class CloudDungeonMaster implements AiDungeonMaster {
         final body = await utf8.decoder.bind(response).join();
         final decoded = jsonDecode(body);
         final narration = _extractGeminiInteractionText(decoded);
-        if (!context.structuredOutput &&
-            !NarratorContext.isUsableNarration(narration)) {
-          throw StateError(
-            'The cloud narrator returned prompt text instead of a usable scene. Please try again.',
+        if (!context.structuredOutput) {
+          NarrationGuard.requireUsable(
+            narration,
+            instructions: [
+              context.toCloudInstruction(
+                instruction: instruction,
+                styleNote: styleNote,
+              ),
+            ],
           );
+          onToken?.call(narration);
         }
-        onToken?.call(narration);
         return narration;
       }
 
@@ -181,15 +187,20 @@ class CloudDungeonMaster implements AiDungeonMaster {
         final token = _extractToken(config.provider, decoded);
         if (token != null && token.isNotEmpty) {
           output.write(token);
-          onToken?.call(token);
         }
       }
       final narration = output.toString().trim();
-      if (!context.structuredOutput &&
-          !NarratorContext.isUsableNarration(narration)) {
-        throw StateError(
-          'The cloud narrator returned prompt text instead of a usable scene. Please try again.',
+      if (!context.structuredOutput) {
+        NarrationGuard.requireUsable(
+          narration,
+          instructions: [
+            context.toCloudInstruction(
+              instruction: instruction,
+              styleNote: styleNote,
+            ),
+          ],
         );
+        onToken?.call(narration);
       }
       return narration;
     } finally {

@@ -41,13 +41,23 @@ class LocalModelRecord {
     'path': path,
     'bytes': bytes,
   };
-  factory LocalModelRecord.fromJson(Map<String, dynamic> json) =>
-      LocalModelRecord(
-        id: json['id'] as String,
-        name: json['name'] as String,
-        path: json['path'] as String,
-        bytes: json['bytes'] as int,
-      );
+  static LocalModelRecord? tryParse(Object? value) {
+    if (value
+        case {
+          'id': String id,
+          'name': String name,
+          'path': String path,
+          'bytes': int bytes,
+        }
+        when id.isNotEmpty &&
+            name.isNotEmpty &&
+            path.isNotEmpty &&
+            !path.contains('\u0000') &&
+            bytes >= 0) {
+      return LocalModelRecord(id: id, name: name, path: path, bytes: bytes);
+    }
+    return null;
+  }
 }
 
 class LocalModelStore {
@@ -97,16 +107,21 @@ class LocalModelStore {
   }
 
   Future<List<LocalModelRecord>> load() async {
-    final raw = (await SharedPreferences.getInstance()).getString(_modelsKey);
-    if (raw == null) return [];
-    final decoded = jsonDecode(raw) as List;
-    return decoded
-        .whereType<Map>()
-        .map(
-          (item) => LocalModelRecord.fromJson(Map<String, dynamic>.from(item)),
-        )
-        .where((model) => File(model.path).existsSync())
-        .toList();
+    final raw = (await SharedPreferences.getInstance()).get(_modelsKey);
+    if (raw is! String) return [];
+    final Object? decoded;
+    try {
+      decoded = jsonDecode(raw);
+    } on FormatException {
+      return [];
+    }
+    if (decoded is! List) return [];
+    return [
+      for (final item in decoded)
+        if (LocalModelRecord.tryParse(item) case final model?
+            when File(model.path).existsSync())
+          model,
+    ];
   }
 
   Future<LocalModelRecord?> importGguf() async {
@@ -191,8 +206,8 @@ class LocalModelStore {
       );
 
   Future<String?> selectedId() async {
-    final id = (await SharedPreferences.getInstance()).getString(selectedKey);
-    return id == null || id.isEmpty ? null : id;
+    final id = (await SharedPreferences.getInstance()).get(selectedKey);
+    return id is String && id.isNotEmpty ? id : null;
   }
 
   Future<void> _save(List<LocalModelRecord> models) async =>

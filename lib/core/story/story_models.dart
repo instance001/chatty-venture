@@ -1,3 +1,10 @@
+/// Save files may represent a counter as an integer or decimal text.
+int? savedCounter(Object? value) => switch (value) {
+  int count => count,
+  String text => int.tryParse(text.trim(), radix: 10),
+  _ => null,
+};
+
 enum StoryActionKind { choose, freeform }
 
 class StoryAction {

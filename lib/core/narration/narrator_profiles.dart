@@ -2,6 +2,7 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'narrator.dart';
+import 'narration_guard.dart';
 import 'cloud_narrator.dart';
 import 'narrator_prompt_settings.dart';
 import 'narrator_style_settings.dart';
@@ -136,7 +137,6 @@ class LocalGgufDungeonMaster implements AiDungeonMaster {
       if (event['type'] == 'token') {
         final token = event['text'] as String? ?? '';
         draft.write(token);
-        onToken?.call(token);
       }
     });
     Map<String, dynamic>? result;
@@ -160,6 +160,14 @@ class LocalGgufDungeonMaster implements AiDungeonMaster {
     final text = result?['text'] as String? ?? draft.toString();
     if (text.trim().isEmpty) {
       throw StateError('The local narrator returned no text.');
+    }
+    if (!context.structuredOutput) {
+      NarrationGuard.requireUsable(
+        text,
+        instructions: [promptTemplate, styleNote],
+      );
+      // Native deltas remain private until the whole response is admitted.
+      onToken?.call(text);
     }
     return text;
   }

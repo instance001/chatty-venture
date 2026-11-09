@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:math';
 
 import '../narration/narrator.dart';
+import '../narration/narration_guard.dart';
+import 'solo_adventure.dart';
 import 'story_models.dart';
 
 class FreeModeTemplate {
@@ -136,11 +138,66 @@ class FreeModeBible {
     'flavour': flavour,
   };
 
+  static final _placeholder = RegExp(
+    r'\{\{|\}\}|\$\{[^}]+\}|'
+    r'[\[{<]\s*(?:insert\s+[^\]}>]+|(?:act[ _]\d+[ _])?'
+    r'(?:location|objective|title|name|item|character|premise|problem|stakes|'
+    r'flavour|escalation|key[ _]anchor|supporting[ _]character|ending[ _]image)'
+    r'(?:[ _]name)?)\s*[\]}>]',
+    caseSensitive: false,
+  );
+  static final _machineId = RegExp(
+    r'\b(?:[a-z][a-z0-9]*_)*id_[a-z0-9_]+\b|'
+    r'\b(?:[a-z][a-z0-9]*_){2,}\d+\b|'
+    r'\b[a-z][a-z0-9_]*_\d{8,}\b|'
+    r'\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b',
+    caseSensitive: false,
+  );
+
+  // Applied before preview and when edits are accepted. Frozen saves retain
+  // their original story details on resume.
+  String? get setupError {
+    for (final field in storyFields) {
+      if (_placeholder.hasMatch(field) || _machineId.hasMatch(field)) {
+        return 'An adventure detail contains a placeholder or generated ID.';
+      }
+    }
+    if (!premise.trimLeft().toLowerCase().startsWith('you ')) {
+      return 'Start the premise with “You” and describe one adventurer.';
+    }
+    if (storyFields.any(SoloAdventure.assignsParty)) {
+      return 'Give the adventure and its objectives to one adventurer.';
+    }
+    return null;
+  }
+
+  Iterable<String> get storyFields => [
+    ...toJson().values.whereType<String>(),
+    ...locations,
+    ...objectives,
+  ];
+
+  Iterable<String> get hintText sync* {
+    for (var act = 0; act < objectives.length; act++) {
+      final objective = objectives[act];
+      final clauses = _objectiveClauses(objective);
+      yield objective;
+      // "Find and rescue the local..." has a shared target. The rescue clause
+      // still gives away the task even when the narrator omits "Find and".
+      yield* clauses;
+      if (clauses.length < 2) yield _surveyStep(locations[act]);
+    }
+  }
+
   factory FreeModeBible.fromJson(Map source) {
-    String read(String key) => source[key]?.toString().trim() ?? '';
-    List<String> list(String key) => (source[key] as List? ?? const [])
-        .map((value) => value.toString().trim())
-        .toList();
+    String read(String key) =>
+        source[key] is String ? (source[key] as String).trim() : '';
+    List<String> list(String key) => switch (source[key]) {
+      List values => [
+        for (final value in values) value is String ? value.trim() : '',
+      ],
+      _ => [],
+    };
     return FreeModeBible(
       title: read('title'),
       premise: read('premise'),
@@ -246,26 +303,52 @@ class FreeModeRun {
   factory FreeModeRun.fromJson(Map source) {
     final bible = source['bible'];
     if (bible is! Map) throw const FormatException('Invalid Free Mode bible.');
-    final result = FreeModeRun(
-      templateId: source['template_id']?.toString() ?? '',
-      bible: FreeModeBible.fromJson(bible),
-      act: source['act'] as int? ?? 0,
-      completedObjectives: (source['completed_objectives'] as List? ?? const [])
-          .whereType<int>()
-          .toList(),
-      completedSteps: (source['completed_steps'] as List? ?? const [])
-          .whereType<int>()
-          .map((count) => count.clamp(0, 2))
-          .toList(),
-      history: (source['history'] as List? ?? const [])
-          .whereType<String>()
-          .toList(),
-      epilogue: source['epilogue'] as String?,
-    );
-    if (result.templateId.isEmpty || !result.bible.isUsable) {
+    final details = FreeModeBible.fromJson(bible);
+    final id = source['template_id'];
+    final act = savedCounter(source['act'] ?? 0);
+    if (!details.isUsable ||
+        id is! String ||
+        id.trim().isEmpty ||
+        act == null ||
+        act < 0 ||
+        act > details.locations.length) {
       throw const FormatException('Invalid Free Mode run.');
     }
-    return result;
+    // Earlier versions could admit model formatting or hidden instructions.
+    bool canDisplay(String text) =>
+        !NarrationGuard.containsJsonOutput(text) &&
+        !NarrationGuard.repeatsHint(text, details.hintText) &&
+        !NarrationGuard.containsInstructionLeak(text);
+    final afterword = source['epilogue'];
+    List entries(String key) =>
+        source[key] is List ? source[key] as List : const [];
+    return FreeModeRun(
+      templateId: id,
+      bible: details,
+      act: act,
+      completedObjectives: entries('completed_objectives')
+          .map(savedCounter)
+          .whereType<int>()
+          .where((index) => index >= 0 && index < act)
+          .toSet()
+          .toList(),
+      // Each slot belongs to one act. Dropping a bad slot would move later progress.
+      completedSteps: [
+        for (final count in entries(
+          'completed_steps',
+        ).take(details.locations.length))
+          (savedCounter(count) ?? 0).clamp(0, 2),
+      ],
+      history: entries(
+        'history',
+      ).whereType<String>().where(canDisplay).toList(),
+      epilogue:
+          afterword is String &&
+              afterword.trim().isNotEmpty &&
+              canDisplay(afterword)
+          ? afterword
+          : null,
+    );
   }
 }
 
@@ -362,8 +445,13 @@ class FreeModeReducer {
       'use',
       'establish',
     };
-    return _containsNear(words, completionWords) &&
-        _containsNear(words, _relevantTerms(run, run.act));
+    final targets = _relevantTerms(run, run.act);
+    // An objective often includes its own action verb. Require a separate
+    // target word so "discover" cannot satisfy both halves of the action.
+    final verbs = words
+        .where((word) => completionWords.any((verb) => _isNear(word, verb)))
+        .toSet();
+    return verbs.isNotEmpty && _containsNear(words.difference(verbs), targets);
   }
 
   static const _scoutingWords = {
@@ -437,19 +525,29 @@ class FreeModeReducer {
 /// that already has two clauses keeps them; otherwise reconnaissance is added
 /// before the model-authored objective.
 List<String> freeModeActSteps(FreeModeRun run, int act) {
-  final clauses = run.bible.objectives[act]
-      .split(RegExp(r'\b(?:and then|then|and|before)\b', caseSensitive: false))
-      .map((clause) => clause.trim())
-      .where((clause) => clause.length >= 3)
-      .toList();
-  if (clauses.length >= 2) {
-    return [clauses.first, clauses.skip(1).join(' then ')];
-  }
-  return [
-    'Survey ${run.bible.locations[act]} and assess the situation',
-    run.bible.objectives[act],
-  ];
+  final objective = run.bible.objectives[act];
+  final clauses = _objectiveClauses(objective);
+  if (clauses.length == 2) return clauses;
+  return [_surveyStep(run.bible.locations[act]), objective];
 }
+
+// Keep temporal details such as "before nightfall" with their action.
+final _stepSeparator = RegExp(
+  r'\s+(?:and\s+then|then|and)\s+',
+  caseSensitive: false,
+);
+final _storyWord = RegExp(r'[\p{L}\p{N}]+', unicode: true);
+List<String> _objectiveClauses(String text) {
+  final separator = _stepSeparator.firstMatch(text);
+  if (separator == null) return const [];
+  return [
+    text.substring(0, separator.start).trim(),
+    text.substring(separator.end).trim(),
+  ].where((part) => _storyWord.allMatches(part).skip(1).isNotEmpty).toList();
+}
+
+String _surveyStep(String location) =>
+    'Survey $location and assess the situation';
 
 class FreeModeProposalService {
   Future<FreeModeBible> generate(
@@ -465,6 +563,17 @@ class FreeModeProposalService {
     if (!bible.isUsable) {
       throw StateError('The generated adventure is missing required details.');
     }
+    if (bible.storyFields.any(
+      (field) => NarrationGuard.containsInstructionLeak(
+        field,
+        instructions: [context.cloudInstructionOverride!],
+      ),
+    )) {
+      throw const FormatException(
+        'The generated adventure repeated instructions. Please retry.',
+      );
+    }
+    if (bible.setupError case final error?) throw FormatException(error);
     return bible;
   }
 
@@ -514,7 +623,7 @@ class FreeModeProposalService {
 
   FreeModeBible _demo(FreeModeTemplate template) => FreeModeBible(
     title: '${template.label} at Ember Crossing',
-    premise: 'A quiet settlement needs your help before nightfall.',
+    premise: 'You reach Ember Crossing just as its last lantern goes dark.',
     problem: 'The Lantern Engine has fallen silent.',
     keyAnchor: 'a brass compass',
     supportingCharacter: 'Mara, the tired signal keeper',

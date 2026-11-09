@@ -1,0 +1,4 @@
+Resume an interrupted turn after reopening the app without repeating your action.
+Stop on-device narration sooner on slower phones.
+Adventure startup now recovers from a damaged local model list.
+Improved Free Mode narration and kept objectives behind Hint during play.

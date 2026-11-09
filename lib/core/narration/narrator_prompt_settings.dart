@@ -6,6 +6,8 @@ enum NarratorPromptLane { cloud, localGguf }
 /// prompt experiment cannot disconnect the narrator from story truth.
 class NarratorPromptSettings {
   static const storyPacketToken = '{{story_packet}}';
+  static const completedActionInstruction =
+      'Show what the adventurer notices immediately after the action succeeds.';
   static const _cloudKey = 'cloud_narration_instruction';
   static const _ggufKey = 'gguf_narration_template';
 

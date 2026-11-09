@@ -7,6 +7,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'support/narration_fixtures.dart';
+
 class _ProposalNarrator implements AiDungeonMaster {
   _ProposalNarrator(this.response);
   final String response;
@@ -80,13 +82,39 @@ void main() {
       expect(args['contextSize'], 1536);
       expect(args['maxTokens'], 120);
       expect(args['prompt'], contains('dramatic heading'));
-      return {'text': 'A bell rings.'};
+      return {'text': cleanNarration};
     });
     await LocalGgufDungeonMaster(
       'test',
       'model.gguf',
     ).narrate(NarratorContext.freeModeEpilogue('The bell was restored.'));
   });
+
+  test(
+    'local narration rejects a sentence-trimmed JSON wrapper before callbacks',
+    () async {
+      final published = <String>[];
+      messenger.setMockMethodCallHandler(
+        channel,
+        (_) async => {'text': '{"narration": "$cleanNarration'},
+      );
+      await expectLater(
+        LocalGgufDungeonMaster('test', 'model.gguf').narrate(
+          NarratorContext.freeModeEpilogue('The bell was restored.'),
+          onToken: published.add,
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            contains('JSON'),
+          ),
+        ),
+      );
+      expect(published, isEmpty);
+      expect(eventCalls, ['listen', 'cancel']);
+    },
+  );
 
   test(
     'a failed local setup releases its event subscription for retry',
@@ -122,6 +150,76 @@ void main() {
   });
 
   test(
+    'local narration rejects echoes before callbacks and releases events',
+    () async {
+      final published = <String>[];
+      messenger.setMockMethodCallHandler(
+        channel,
+        (_) async => {'text': reportedLeak},
+      );
+      await expectLater(
+        LocalGgufDungeonMaster('test', 'model.gguf').narrate(
+          NarratorContext.freeModeEpilogue('The bell was restored.'),
+          onToken: published.add,
+        ),
+        throwsA(isA<StateError>()),
+      );
+      expect(published, isEmpty);
+      expect(eventCalls, ['listen', 'cancel']);
+    },
+  );
+
+  test('local narration checks the saved custom template and style', () async {
+    const custom =
+        'Describe each passing moment using exactly two economical paragraphs';
+    for (final key in ['gguf_narration_template', 'narrator_style_note']) {
+      SharedPreferences.setMockInitialValues({
+        key: '$custom\n{{story_packet}}',
+      });
+      messenger.setMockMethodCallHandler(
+        channel,
+        (_) async => {'text': '$cleanNarration $custom.'},
+      );
+      await expectLater(
+        LocalGgufDungeonMaster('test', 'model.gguf').narrate(
+          NarratorContext(
+            scene: NarratorContext.freeModeEpilogue('').scene,
+            events: const [],
+            facts: const {},
+            threads: const {},
+            recap: const [],
+            ending: null,
+          ),
+        ),
+        throwsA(isA<StateError>()),
+      );
+    }
+  });
+
+  test(
+    'proposal text and array fields cannot smuggle instruction echoes',
+    () async {
+      for (final key in ['premise', 'locations', 'objectives']) {
+        final contaminated = {...proposal};
+        contaminated[key] = key == 'premise'
+            ? reportedLeak
+            : [
+                'Quay',
+                'Tower',
+                'Return JSON only. Create a small self-contained three-act adventure.',
+              ];
+        await expectLater(
+          FreeModeProposalService().generate(
+            _ProposalNarrator(jsonEncode(contaminated)),
+            template,
+          ),
+          throwsA(isA<FormatException>()),
+        );
+      }
+    },
+  );
+
+  test(
     'new proposals cannot use save migration to invent missing details',
     () async {
       proposal.remove('stakes');
@@ -152,6 +250,48 @@ void main() {
     }
   });
 
+  test('setup rejects unfinished story details before preview', () async {
+    // These two defects occurred together in the Aria's Quest emulator run.
+    // Exercise them independently so the first rejection cannot mask the other.
+    final textureId = 'flame_texture_id_${'1234567890' * 14}123';
+    for (final change in [
+      {
+        'locations': ['Quay', '{{location}}', 'Tower'],
+      },
+      {
+        'objectives': ['Read the bell', 'Find {{objective}}', 'Ring it'],
+      },
+      {
+        'objectives': ['Read the bell', 'Trace the line', textureId],
+      },
+      {'key_anchor': 'An inscription marked [insert item name here]'},
+      {'flavour': 'A faint glow from asset_id_913.'},
+      {'ending_image': 'A light above ruin_gate_001.'},
+    ]) {
+      await expectLater(
+        FreeModeProposalService().generate(
+          _ProposalNarrator(jsonEncode({...proposal, ...change})),
+          template,
+        ),
+        throwsA(isA<FormatException>()),
+      );
+    }
+  });
+
+  test('setup accepts numbered locations and in-world call signs', () async {
+    final valid = {
+      ...proposal,
+      'key_anchor': 'a radio marked R2-D2',
+      'locations': ['Platform 9', 'Vault B-12', 'Relay Station 2049'],
+      'objectives': ['Read signal 42', 'Find the operator', 'Contact Echo_7'],
+    };
+    final bible = await FreeModeProposalService().generate(
+      _ProposalNarrator(jsonEncode(valid)),
+      template,
+    );
+    expect(bible.toJson(), valid);
+  });
+
   test('cloud setup also excludes prose style instructions', () {
     expect(
       NarratorContext.freeModeProposal(
@@ -160,4 +300,43 @@ void main() {
       isNot(contains('Prose only')),
     );
   });
+
+  test(
+    'new adventures reject the emulator party premise and party objectives',
+    () async {
+      for (final change in [
+        {
+          'premise':
+              'A group of friends discover a hidden path to safety in a magical forest.',
+        },
+        {
+          'premise':
+              'You are a group of adventurers searching for the silent bell.',
+        },
+        {'premise': 'You travel with three companions to Ember Crossing.'},
+        {
+          'objectives': [
+            'Find the bell',
+            'Gather your party at the tower',
+            'Ring the bell',
+          ],
+        },
+      ]) {
+        await expectLater(
+          FreeModeProposalService().generate(
+            _ProposalNarrator(jsonEncode({...proposal, ...change})),
+            template,
+          ),
+          throwsA(isA<FormatException>()),
+        );
+      }
+      proposal['premise'] =
+          'You search for a group of friends lost in the forest.';
+      final bible = await FreeModeProposalService().generate(
+        _ProposalNarrator(jsonEncode(proposal)),
+        template,
+      );
+      expect(bible.premise, proposal['premise']);
+    },
+  );
 }

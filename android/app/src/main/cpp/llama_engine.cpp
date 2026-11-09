@@ -23,8 +23,7 @@ namespace {
 
 constexpr char kLogTag[] = "chatty_llama";
 constexpr int kDefaultContextSize = 2048;
-// Small batches and one worker keep lower-end Android CPUs responsive and
-// avoid pathological long prompt-evaluation stalls on older big.LITTLE chips.
+// Keep prompt batches small on memory-constrained Android devices.
 constexpr int kDefaultBatchSize = 32;
 constexpr int kDefaultPredictTokens = 160;
 constexpr float kDefaultTemperature = 0.7f;
@@ -137,14 +136,8 @@ void android_log(enum ggml_log_level level, const char * text, void * /* user_da
 }
 
 int pick_thread_count() {
-    const long cpu_count = sysconf(_SC_NPROCESSORS_ONLN);
-    if (cpu_count <= 2) {
-      return 2;
-    }
-    if (cpu_count <= 4) {
-      return 3;
-    }
-    return static_cast<int>(std::min<long>(cpu_count - 1, 4));
+    // Two workers nearly halved A21s turn time. Leave CPU headroom for the UI.
+    return sysconf(_SC_NPROCESSORS_ONLN) >= 4 ? 2 : 1;
 }
 
 void ensure_backend_initialized() {
@@ -216,8 +209,8 @@ bool load_model_locked(const std::string & model_path, int context_size, int gpu
     context_params.n_ctx = context_size > 0 ? static_cast<uint32_t>(context_size) : kDefaultContextSize;
     context_params.n_batch = kDefaultBatchSize;
     context_params.n_ubatch = kDefaultBatchSize;
-    context_params.n_threads = 1;
-    context_params.n_threads_batch = 1;
+    context_params.n_threads = pick_thread_count();
+    context_params.n_threads_batch = context_params.n_threads;
 
     g_context = llama_init_from_model(g_model, context_params);
     if (g_context == nullptr) {
@@ -235,11 +228,18 @@ bool load_model_locked(const std::string & model_path, int context_size, int gpu
     return true;
 }
 
-bool decode_tokens(
+enum class PromptDecodeResult { completed, cancelled, failed };
+
+PromptDecodeResult decode_tokens(
         const std::vector<llama_token> & tokens,
         llama_pos start_position,
         bool compute_last_logits) {
     for (size_t i = 0; i < tokens.size(); i += kDefaultBatchSize) {
+        // Prompt processing is the longest phase on small devices. Honour Stop
+        // between batches instead of waiting for the whole prompt to finish.
+        if (g_cancel_requested.load()) {
+            return PromptDecodeResult::cancelled;
+        }
         const int batch_size = static_cast<int>(std::min(tokens.size() - i, static_cast<size_t>(kDefaultBatchSize)));
         common_batch_clear(g_batch);
         for (int j = 0; j < batch_size; ++j) {
@@ -255,11 +255,13 @@ bool decode_tokens(
 
         if (llama_decode(g_context, g_batch) != 0) {
             set_last_error("llama.cpp failed while processing the prompt.");
-            return false;
+            return PromptDecodeResult::failed;
         }
     }
 
-    return true;
+    return g_cancel_requested.load()
+        ? PromptDecodeResult::cancelled
+        : PromptDecodeResult::completed;
 }
 
 std::string format_user_prompt(const std::string & prompt) {
@@ -366,11 +368,22 @@ bool stream_completion_locked(
         return false;
     }
 
-    if (!decode_tokens(prompt_tokens, 0, true)) {
+    const auto prompt_start = ggml_time_us();
+    const auto prompt_result = decode_tokens(prompt_tokens, 0, true);
+    if (prompt_result == PromptDecodeResult::cancelled) {
+        llama_synchronize(g_context);
+        emit_java_signal(env, bridge, cancelled_method, request_id);
+        return true;
+    }
+    if (prompt_result == PromptDecodeResult::failed) {
         emit_java_message(env, bridge, failed_method, request_id, g_last_error);
         return false;
     }
 
+    llama_synchronize(g_context);
+    const auto generation_start = ggml_time_us();
+    __android_log_print(ANDROID_LOG_INFO, kLogTag, "prompt: %zu tokens in %.2f s (%d threads)",
+        prompt_tokens.size(), (generation_start - prompt_start) / 1e6, llama_n_threads_batch(g_context));
     std::string assembled;
     std::string utf8_cache;
     llama_pos current_position = static_cast<llama_pos>(prompt_tokens.size());
@@ -407,6 +420,11 @@ bool stream_completion_locked(
             utf8_cache.clear();
         }
     }
+
+    llama_synchronize(g_context);
+    __android_log_print(ANDROID_LOG_INFO, kLogTag, "generation: %zu tokens in %.2f s (%d threads)",
+        static_cast<size_t>(current_position) - prompt_tokens.size(),
+        (ggml_time_us() - generation_start) / 1e6, llama_n_threads(g_context));
 
     if (options.structured_output && !reached_end) {
         emit_java_message(env, bridge, failed_method, request_id,

@@ -1,4 +1,6 @@
 import '../story/story_models.dart';
+import '../story/solo_adventure.dart';
+import 'narration_guard.dart';
 import 'narrator_prompt_settings.dart';
 
 abstract interface class AiDungeonMaster {
@@ -22,6 +24,7 @@ class NarratorContext {
     this.ggufTemplateOverride,
     this.structuredOutput = false,
     this.canonicalAddendum,
+    this.playerAction,
   });
   final StoryScene scene;
   final List<StoryEvent> events;
@@ -33,6 +36,16 @@ class NarratorContext {
   final String? ggufTemplateOverride;
   final bool structuredOutput;
   final String? canonicalAddendum;
+  final String? playerAction;
+
+  static const _proposalInstruction =
+      'Return JSON only. Create a three-act adventure for one solo adventurer. '
+      'Begin the premise with "You ". Give each objective to that one person. '
+      'The supporting character is a local you meet at one location. '
+      'Use the supplied geometry. Required fields: title, premise, problem, '
+      'key_anchor, supporting_character, stakes, escalation, ending_image, '
+      'locations (exactly 3 strings), objectives (exactly 3 strings), flavour. '
+      'Keep every field concrete and short.';
 
   factory NarratorContext.freeModeProposal(String geometry) => NarratorContext(
     scene: const StoryScene(
@@ -47,12 +60,8 @@ class NarratorContext {
     recap: [geometry],
     ending: null,
     structuredOutput: true,
-    cloudInstructionOverride:
-        'Return JSON only. Create a small self-contained three-act adventure using the supplied geometry. Do not write narration or markdown. Required fields: title, premise, problem, key_anchor, supporting_character, stakes, escalation, ending_image, locations (exactly 3 strings), objectives (exactly 3 strings), flavour. Keep every field concrete and short.',
-    ggufTemplateOverride:
-        '''Return JSON only. Create a small self-contained three-act adventure using the supplied geometry. Do not write narration or markdown. Required fields: title, premise, problem, key_anchor, supporting_character, stakes, escalation, ending_image, locations (exactly 3 strings), objectives (exactly 3 strings), flavour. Keep every field concrete and short.
-
-{{story_packet}}''',
+    cloudInstructionOverride: _proposalInstruction,
+    ggufTemplateOverride: '$_proposalInstruction\n\n{{story_packet}}',
   );
 
   factory NarratorContext.freeModeEpilogue(
@@ -97,7 +106,8 @@ OPEN THREADS: ${threads.values.map((thread) => '${thread.label}: ${thread.status
 RECENT RECAP: ${recap.join(' | ')}
 ENDING: ${ending ?? 'none'}''';
   String toCanonicalPacket() =>
-      '${toStoryPacket()}${canonicalAddendum == null || canonicalAddendum!.trim().isEmpty ? '' : '\n$canonicalAddendum'}';
+      '${toStoryPacket()}${canonicalAddendum == null || canonicalAddendum!.trim().isEmpty ? '' : '\n$canonicalAddendum'}'
+      '${structuredOutput ? '' : '\n${SoloAdventure.narrationRule}'}';
 
   /// Exact prompt used by the last known-good 360M GGUF narration path.
   /// Cloud formatting remains separate below this canonical state packet.
@@ -128,17 +138,7 @@ ENDING: ${ending ?? 'none'}''';
   /// Compatibility alias for existing prompt consumers.
   String toPrompt() => toGgufPrompt();
 
-  static bool isUsableNarration(String text) {
-    final words = text.split(RegExp(r'\s+')).where((word) => word.isNotEmpty);
-    if (words.length < 30) return false;
-    final lower = text.toLowerCase();
-    return !lower.contains('you are the narrator') &&
-        !lower.contains('write narration for') &&
-        !lower.contains('scene description:') &&
-        !lower.contains('confirmed turn:') &&
-        !lower.contains('durable facts:') &&
-        !lower.contains('fleeting sensory texture allowed');
-  }
+  static bool isUsableNarration(String text) => NarrationGuard.isUsable(text);
 }
 
 class DemoDungeonMaster implements AiDungeonMaster {

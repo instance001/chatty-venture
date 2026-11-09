@@ -8,7 +8,8 @@ namespace chatty {
 // syntax and its required fields, including exactly three acts. Bounded strings
 // and whitespace keep small models from spending the whole budget on one field.
 inline constexpr char kFreeModeGrammar[] = R"gbnf(
-root ::= "{" ws "\"title\"" ws ":" ws string "," ws "\"premise\"" ws ":" ws string "," ws "\"problem\"" ws ":" ws string "," ws "\"key_anchor\"" ws ":" ws string "," ws "\"supporting_character\"" ws ":" ws string "," ws "\"stakes\"" ws ":" ws string "," ws "\"escalation\"" ws ":" ws string "," ws "\"ending_image\"" ws ":" ws string "," ws "\"locations\"" ws ":" ws triple "," ws "\"objectives\"" ws ":" ws triple "," ws "\"flavour\"" ws ":" ws string "}"
+root ::= "{" ws "\"title\"" ws ":" ws string "," ws "\"premise\"" ws ":" ws premise "," ws "\"problem\"" ws ":" ws string "," ws "\"key_anchor\"" ws ":" ws string "," ws "\"supporting_character\"" ws ":" ws string "," ws "\"stakes\"" ws ":" ws string "," ws "\"escalation\"" ws ":" ws string "," ws "\"ending_image\"" ws ":" ws string "," ws "\"locations\"" ws ":" ws triple "," ws "\"objectives\"" ws ":" ws triple "," ws "\"flavour\"" ws ":" ws string "}"
+premise ::= "\"You " char{1,156} "\"" ws
 triple ::= "[" ws string "," ws string "," ws string "]" ws
 string ::= "\"" char{3,160} "\"" ws
 char ::= [^"\\\x00-\x1F] | "\\" (["\\/bfnrt] | "u" [0-9a-fA-F]{4})

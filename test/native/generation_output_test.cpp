@@ -28,8 +28,13 @@ bool accepts(const std::string & text) {
 }
 
 int main() {
-    const std::string proposal = R"json({"title":"The Quiet Bell","premise":"The bell is silent.","problem":"A rope is missing.","key_anchor":"a blue knot","supporting_character":"Iris the keeper","stakes":"The tide is coming.","escalation":"The storm grows.","ending_image":"The bell rings.","locations":["Quay","Archive","Tower"],"objectives":["Find the rope","Trace the knot","Restore the bell"],"flavour":"Rain and salt air."})json";
+    const std::string proposal = R"json({"title":"The Quiet Bell","premise":"You hear the bell fall silent.","problem":"A rope is missing.","key_anchor":"a blue knot","supporting_character":"Iris the keeper","stakes":"The tide is coming.","escalation":"The storm grows.","ending_image":"The bell rings.","locations":["Quay","Archive","Tower"],"objectives":["Find the rope","Trace the knot","Restore the bell"],"flavour":"Rain and salt air."})json";
     check(accepts(proposal), "Valid proposal rejected");
+    auto party_premise = proposal;
+    party_premise.replace(party_premise.find("You hear the bell fall silent."),
+                          std::string("You hear the bell fall silent.").size(),
+                          "A group of friends sets out.");
+    check(!accepts(party_premise), "Group-led premise accepted");
     check(!accepts("Title: The Lost City of Eldoria"), "Plain prose accepted");
     check(!accepts(proposal.substr(0, proposal.size() - 2)), "Truncated JSON accepted");
     auto two_locations = proposal;
